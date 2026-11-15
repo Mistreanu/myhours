@@ -86,6 +86,41 @@ export function parseDurationInput(value: string): number | null {
     return null;
 }
 
+/**
+ * Reads a typed time as 24-hour "HH:mm", or null when it is not a valid time.
+ * Accepts "8" → 08:00, "830" / "0830" → 08:30, "17:5" → 17:05, "8.30", "8,30", "8h30", "8 30".
+ */
+export function parseTimeInput(value: string): string | null {
+    const v = value.trim().toLowerCase();
+    let h: number;
+    let m: number;
+
+    if (/^\d{1,2}$/.test(v)) {
+        h = Number(v);
+        m = 0;
+    } else if (/^\d{3,4}$/.test(v)) {
+        h = Number(v.slice(0, -2));
+        m = Number(v.slice(-2));
+    } else {
+        const match = v.match(/^(\d{1,2})\s*[:.,h ]\s*(\d{1,2})$/);
+        if (!match) return null;
+        h = Number(match[1]);
+        m = Number(match[2]);
+    }
+
+    if (h > 23 || m > 59) return null;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** Moves a "HH:mm" time to the next/previous multiple of `step` minutes, wrapping around midnight. */
+export function stepTime(time: string, direction: 1 | -1, step = 15): string {
+    const [h, m] = time.split(':').map(Number);
+    const total = h * 60 + m;
+    const snapped = direction === 1 ? Math.floor(total / step) * step + step : Math.ceil(total / step) * step - step;
+    const wrapped = ((snapped % 1440) + 1440) % 1440;
+    return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+}
+
 export function nowTime(): string {
     const d = new Date();
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;

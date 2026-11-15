@@ -2,6 +2,7 @@ import InputError from '@/components/input-error';
 import { ProjectSelect } from '@/components/project-select';
 import { RateSelect } from '@/components/rate-select';
 import { TagSelect, type TagValue } from '@/components/tag-select';
+import { TimeInput } from '@/components/time-input';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -157,11 +158,11 @@ export function TimeEntryForm({ projects, rates, tags, entry, defaults, onDone, 
                     <div className="grid grid-cols-2 gap-2">
                         <div className="grid gap-1.5">
                             <Label htmlFor="start">Start</Label>
-                            <Input id="start" type="time" required value={data.start} onChange={(e) => setData('start', e.target.value)} />
+                            <TimeInput id="start" required value={data.start} onChange={(v) => setData('start', v)} />
                         </div>
                         <div className="grid gap-1.5">
                             <Label htmlFor="end">End</Label>
-                            <Input id="end" type="time" required value={data.end} onChange={(e) => setData('end', e.target.value)} />
+                            <TimeInput id="end" required value={data.end} onChange={(v) => setData('end', v)} />
                         </div>
                     </div>
                     <div className="grid gap-1.5">
