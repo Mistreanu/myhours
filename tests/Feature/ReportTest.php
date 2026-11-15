@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Client;
 use App\Models\Project;
+use App\Models\Rate;
 use App\Models\Tag;
 use App\Models\TimeEntry;
 use App\Models\User;
@@ -21,6 +22,10 @@ class ReportTest extends TestCase
 
     private Project $beta;
 
+    private Rate $programming;
+
+    private Rate $editing;
+
     private Tag $meeting;
 
     protected function setUp(): void
@@ -29,21 +34,24 @@ class ReportTest extends TestCase
 
         $this->user = User::factory()->create();
         $client = Client::factory()->create(['name' => 'Acme']);
-        $this->alpha = Project::factory()->for($client)->create(['name' => 'Alpha', 'hourly_rate' => 100]);
-        $this->beta = Project::factory()->create(['name' => 'Beta', 'hourly_rate' => 50]);
+        $this->alpha = Project::factory()->for($client)->create(['name' => 'Alpha']);
+        $this->beta = Project::factory()->create(['name' => 'Beta']);
+        $this->programming = Rate::factory()->create(['name' => 'Programming', 'hourly_rate' => 100]);
+        $this->editing = Rate::factory()->create(['name' => 'Content editing', 'hourly_rate' => 50]);
         $this->meeting = Tag::factory()->create(['name' => 'meeting']);
 
-        // Alpha: 2h on Nov 10 (tagged meeting) + 1h30 on Nov 12; Beta: 3h on Nov 11; Alpha 1h in October.
-        $this->entry($this->alpha, '2026-11-10 08:00', '2026-11-10 10:00')->tags()->attach($this->meeting);
-        $this->entry($this->alpha, '2026-11-12 13:00', '2026-11-12 14:30');
-        $this->entry($this->beta, '2026-11-11 09:00', '2026-11-11 12:00');
-        $this->entry($this->alpha, '2026-10-20 09:00', '2026-10-20 10:00');
+        // November: Alpha 2h programming (meeting) = 200, Alpha 1h30 programming = 150,
+        // Beta 3h editing = 150. October: Alpha 1h programming = 100.
+        $this->entry($this->alpha, $this->programming, '2026-11-10 08:00', '2026-11-10 10:00')->tags()->attach($this->meeting);
+        $this->entry($this->alpha, $this->programming, '2026-11-12 13:00', '2026-11-12 14:30');
+        $this->entry($this->beta, $this->editing, '2026-11-11 09:00', '2026-11-11 12:00');
+        $this->entry($this->alpha, $this->programming, '2026-10-20 09:00', '2026-10-20 10:00');
     }
 
-    private function entry(Project $project, string $start, string $end): TimeEntry
+    private function entry(Project $project, Rate $rate, string $start, string $end): TimeEntry
     {
         return TimeEntry::factory()->for($this->user)->for($project)->create([
-            'started_at' => $start, 'ended_at' => $end, 'hourly_rate' => $project->hourly_rate,
+            'rate_id' => $rate->id, 'started_at' => $start, 'ended_at' => $end, 'hourly_rate' => $rate->hourly_rate,
         ]);
     }
 
@@ -57,10 +65,14 @@ class ReportTest extends TestCase
                 ->has('entries', 3)
                 ->where('totals.minutes', 390)
                 ->where('totals.amount', 500)
-                ->has('byProject', 2));
+                ->has('byProject', 2)
+                ->has('byRate', 2)
+                ->where('byRate.0.name', 'Programming')
+                ->where('byRate.0.amount', 350)
+                ->where('entries.0.rate.name', 'Programming'));
     }
 
-    public function test_report_filters_by_project_client_and_tag(): void
+    public function test_report_filters_by_project_client_rate_and_tag(): void
     {
         $base = '/reports/detailed?from=2026-11-01&to=2026-11-30';
 
@@ -69,6 +81,9 @@ class ReportTest extends TestCase
 
         $this->actingAs($this->user)->get($base.'&clients[]='.$this->alpha->client_id)
             ->assertInertia(fn ($page) => $page->has('entries', 2)->where('totals.minutes', 210));
+
+        $this->actingAs($this->user)->get($base.'&rates[]='.$this->programming->id)
+            ->assertInertia(fn ($page) => $page->has('entries', 2)->where('totals.amount', 350));
 
         $this->actingAs($this->user)->get($base.'&tags[]='.$this->meeting->id)
             ->assertInertia(fn ($page) => $page->has('entries', 1)->where('totals.amount', 200));
@@ -89,13 +104,23 @@ class ReportTest extends TestCase
 
         $path = tempnam(sys_get_temp_dir(), 'xlsx');
         file_put_contents($path, $response->streamedContent());
-        $sheet = IOFactory::load($path)->getSheet(0);
+        $book = IOFactory::load($path);
         unlink($path);
 
+        $sheet = $book->getSheet(0);
         $this->assertSame('Date', $sheet->getCell('A4')->getValue());
         $this->assertSame('Alpha', $sheet->getCell('C5')->getValue());
+        $this->assertSame('Programming', $sheet->getCell('D5')->getValue());
         $this->assertSame('TOTAL', $sheet->getCell('A8')->getValue());
-        $this->assertEqualsWithDelta(6.5, $sheet->getCell('H8')->getCalculatedValue(), 0.001);
-        $this->assertEqualsWithDelta(500, $sheet->getCell('J8')->getCalculatedValue(), 0.001);
+        $this->assertEqualsWithDelta(6.5, $sheet->getCell('I8')->getCalculatedValue(), 0.001);
+        $this->assertEqualsWithDelta(500, $sheet->getCell('K8')->getCalculatedValue(), 0.001);
+
+        // Summary sheet: by project (rows 5-6, total 7), then by rate (header 10, rows 11-12, total 13).
+        $summary = $book->getSheet(1);
+        $this->assertEqualsWithDelta(500, $summary->getCell('E7')->getCalculatedValue(), 0.001);
+        $this->assertSame('Rate', $summary->getCell('A10')->getValue());
+        $this->assertSame('Programming', $summary->getCell('A11')->getValue());
+        $this->assertEqualsWithDelta(350, $summary->getCell('E11')->getCalculatedValue(), 0.001);
+        $this->assertEqualsWithDelta(500, $summary->getCell('E13')->getCalculatedValue(), 0.001);
     }
 }

@@ -8,7 +8,7 @@ use App\Models\TimeEntry;
 class EntryPresenter
 {
     /**
-     * Shape a time entry (with project.client and tags loaded) for the frontend.
+     * Shape a time entry (with project.client, rate and tags loaded) for the frontend.
      *
      * @return array<string, mixed>
      */
@@ -28,6 +28,7 @@ class EntryPresenter
                 'color' => $entry->project->color,
                 'client' => $entry->project->client?->name,
             ],
+            'rate' => $entry->rate ? ['id' => $entry->rate->id, 'name' => $entry->rate->name] : null,
             'tags' => $entry->tags->map(fn (Tag $t) => ['id' => $t->id, 'name' => $t->name, 'color' => $t->color])->values(),
         ];
     }

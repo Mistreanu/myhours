@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Client;
 use App\Models\Project;
+use App\Models\Rate;
 use App\Models\Tag;
 use App\Models\TimeEntry;
 use App\Models\User;
@@ -19,41 +20,33 @@ class ProjectClientTagTest extends TestCase
         $user = User::factory()->create();
         TimeEntry::factory()->for($user)->create();
 
-        foreach (['/projects' => 'projects/index', '/clients' => 'clients/index', '/tags' => 'tags/index'] as $url => $component) {
+        foreach (['/projects' => 'projects/index', '/rates' => 'rates/index', '/clients' => 'clients/index', '/tags' => 'tags/index'] as $url => $component) {
             $this->actingAs($user)->get($url)->assertOk()->assertInertia(fn ($page) => $page->component($component));
         }
     }
 
-    public function test_a_project_can_be_created_with_a_client_and_rate(): void
+    public function test_a_project_can_be_created_with_a_client_and_default_rate(): void
     {
         $user = User::factory()->create();
         $client = Client::factory()->create();
+        $rate = Rate::factory()->create();
 
         $this->actingAs($user)->post('/projects', [
             'name' => 'Website',
             'client_id' => $client->id,
-            'hourly_rate' => '125.50',
+            'default_rate_id' => $rate->id,
             'color' => '#10b981',
         ])->assertSessionHasNoErrors();
 
-        $this->assertDatabaseHas('projects', ['name' => 'Website', 'client_id' => $client->id, 'hourly_rate' => 125.50]);
+        $this->assertDatabaseHas('projects', ['name' => 'Website', 'client_id' => $client->id, 'default_rate_id' => $rate->id]);
     }
 
-    public function test_changing_a_rate_only_reprices_entries_when_asked(): void
+    public function test_the_default_rate_is_optional_and_must_exist(): void
     {
         $user = User::factory()->create();
-        $project = Project::factory()->create(['hourly_rate' => 100]);
-        $entry = TimeEntry::factory()->for($user)->for($project)->create([
-            'started_at' => '2026-11-14 08:00', 'ended_at' => '2026-11-14 10:00', 'hourly_rate' => 100,
-        ]);
-        $data = ['name' => $project->name, 'client_id' => $project->client_id, 'color' => $project->color];
 
-        $this->actingAs($user)->put("/projects/{$project->id}", [...$data, 'hourly_rate' => 150])->assertSessionHasNoErrors();
-        $this->assertSame('200.00', $entry->fresh()->amount);
-
-        $this->actingAs($user)->put("/projects/{$project->id}", [...$data, 'hourly_rate' => 150, 'apply_rate_to_entries' => true]);
-        $this->assertSame('150.00', $entry->fresh()->hourly_rate);
-        $this->assertSame('300.00', $entry->fresh()->amount);
+        $this->actingAs($user)->post('/projects', ['name' => 'Internal', 'default_rate_id' => null, 'color' => '#64748b'])->assertSessionHasNoErrors();
+        $this->actingAs($user)->post('/projects', ['name' => 'Other', 'default_rate_id' => 999, 'color' => '#64748b'])->assertSessionHasErrors('default_rate_id');
     }
 
     public function test_projects_with_entries_cannot_be_deleted_but_can_be_archived(): void
@@ -66,7 +59,7 @@ class ProjectClientTagTest extends TestCase
         $this->assertDatabaseHas('projects', ['id' => $project->id]);
 
         $this->actingAs($user)->put("/projects/{$project->id}", [
-            'name' => $project->name, 'client_id' => $project->client_id, 'hourly_rate' => 100, 'color' => '#10b981', 'archived' => true,
+            'name' => $project->name, 'client_id' => $project->client_id, 'color' => '#10b981', 'archived' => true,
         ])->assertSessionHasNoErrors();
         $this->assertTrue($project->fresh()->archived);
     }

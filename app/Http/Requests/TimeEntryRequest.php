@@ -22,6 +22,7 @@ class TimeEntryRequest extends FormRequest
     {
         return [
             'project_id' => ['required', 'integer', 'exists:projects,id'],
+            'rate_id' => ['nullable', 'integer', 'exists:rates,id'],
             'description' => ['nullable', 'string', 'max:5000'],
             'started_at' => ['required', 'date_format:Y-m-d H:i'],
             'ended_at' => ['required', 'date_format:Y-m-d H:i', 'after:started_at', $this->maxDurationRule()],
@@ -42,6 +43,7 @@ class TimeEntryRequest extends FormRequest
     {
         return [
             'project_id' => 'project',
+            'rate_id' => 'rate',
             'description' => 'description',
             'started_at' => 'start',
             'ended_at' => 'end',

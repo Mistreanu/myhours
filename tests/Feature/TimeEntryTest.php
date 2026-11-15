@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Project;
+use App\Models\Rate;
 use App\Models\Tag;
 use App\Models\TimeEntry;
 use App\Models\User;
@@ -13,10 +14,11 @@ class TimeEntryTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function payload(Project $project, array $overrides = []): array
+    private function payload(Project $project, ?Rate $rate, array $overrides = []): array
     {
         return array_merge([
             'project_id' => $project->id,
+            'rate_id' => $rate?->id,
             'description' => 'Fixed the login page',
             'started_at' => '2026-11-14 07:30',
             'ended_at' => '2026-11-14 09:00',
@@ -35,6 +37,8 @@ class TimeEntryTest extends TestCase
         $project = Project::factory()->create();
         TimeEntry::factory()->for($user)->for($project)->create(['started_at' => '2026-11-14 08:00', 'ended_at' => '2026-11-14 10:00']);
         TimeEntry::factory()->for($user)->for($project)->create(['started_at' => '2026-11-13 08:00', 'ended_at' => '2026-11-13 09:00']);
+        Rate::factory()->create(['name' => 'Programming']);
+        Rate::factory()->create(['name' => 'Old', 'archived' => true]);
 
         $this->actingAs($user)
             ->get('/track?date=2026-11-14')
@@ -44,29 +48,58 @@ class TimeEntryTest extends TestCase
                 ->where('date', '2026-11-14')
                 ->has('entries', 1)
                 ->where('totals.minutes', 120)
-                ->has('week', 7));
+                ->has('week', 7)
+                ->has('rates', 1) // archived rates are not offered for new entries
+                ->where('rates.0.name', 'Programming'));
     }
 
-    public function test_creating_an_entry_uses_the_project_rate_and_computes_the_amount(): void
+    public function test_creating_an_entry_uses_the_selected_rate(): void
     {
         $user = User::factory()->create();
-        $project = Project::factory()->create(['hourly_rate' => 100]);
+        $project = Project::factory()->create();
+        $rate = Rate::factory()->create(['hourly_rate' => 100]);
 
-        $this->actingAs($user)->post('/time-entries', $this->payload($project))->assertRedirect();
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, $rate))->assertRedirect();
 
         $entry = TimeEntry::sole();
         $this->assertSame($user->id, $entry->user_id);
+        $this->assertSame($rate->id, $entry->rate_id);
         $this->assertSame(90, $entry->duration_minutes);
         $this->assertSame('100.00', $entry->hourly_rate);
         $this->assertSame('150.00', $entry->amount);
     }
 
+    public function test_one_project_can_use_different_rates(): void
+    {
+        $user = User::factory()->create();
+        $project = Project::factory()->create();
+        $editing = Rate::factory()->create(['name' => 'Content editing', 'hourly_rate' => 50]);
+        $programming = Rate::factory()->create(['name' => 'Programming', 'hourly_rate' => 100]);
+
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, $editing));
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, $programming));
+
+        $this->assertEqualsCanonicalizing(['75.00', '150.00'], TimeEntry::pluck('amount')->all());
+    }
+
+    public function test_an_entry_without_a_rate_is_worth_nothing(): void
+    {
+        $user = User::factory()->create();
+        $project = Project::factory()->create();
+
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, null))->assertSessionHasNoErrors();
+
+        $this->assertNull(TimeEntry::sole()->rate_id);
+        $this->assertSame('0.00', TimeEntry::sole()->amount);
+    }
+
     public function test_entries_can_end_after_midnight(): void
     {
         $user = User::factory()->create();
-        $project = Project::factory()->create(['hourly_rate' => 60]);
+        $project = Project::factory()->create();
+        $rate = Rate::factory()->create(['hourly_rate' => 60]);
 
-        $this->actingAs($user)->post('/time-entries', $this->payload($project, [
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, $rate, [
             'started_at' => '2026-11-14 23:00',
             'ended_at' => '2026-11-15 01:30',
         ]))->assertSessionHasNoErrors();
@@ -81,14 +114,24 @@ class TimeEntryTest extends TestCase
         $project = Project::factory()->create();
 
         $this->actingAs($user)
-            ->post('/time-entries', $this->payload($project, ['ended_at' => '2026-11-14 07:00']))
+            ->post('/time-entries', $this->payload($project, null, ['ended_at' => '2026-11-14 07:00']))
             ->assertSessionHasErrors('ended_at');
 
         $this->actingAs($user)
-            ->post('/time-entries', $this->payload($project, ['ended_at' => '2026-11-15 08:00']))
+            ->post('/time-entries', $this->payload($project, null, ['ended_at' => '2026-11-15 08:00']))
             ->assertSessionHasErrors('ended_at');
 
         $this->assertDatabaseCount('time_entries', 0);
+    }
+
+    public function test_rate_must_exist(): void
+    {
+        $user = User::factory()->create();
+        $project = Project::factory()->create();
+
+        $this->actingAs($user)
+            ->post('/time-entries', $this->payload($project, null, ['rate_id' => 999]))
+            ->assertSessionHasErrors('rate_id');
     }
 
     public function test_tags_can_be_existing_ids_or_new_names(): void
@@ -97,7 +140,7 @@ class TimeEntryTest extends TestCase
         $project = Project::factory()->create();
         $existing = Tag::factory()->create(['name' => 'development']);
 
-        $this->actingAs($user)->post('/time-entries', $this->payload($project, [
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, null, [
             'tags' => [$existing->id, 'meeting', 'meeting'],
         ]))->assertSessionHasNoErrors();
 
@@ -105,24 +148,26 @@ class TimeEntryTest extends TestCase
         $this->assertEqualsCanonicalizing(['development', 'meeting'], TimeEntry::sole()->tags->pluck('name')->all());
     }
 
-    public function test_updating_keeps_the_saved_rate_unless_the_project_changes(): void
+    public function test_updating_keeps_the_saved_amount_unless_the_rate_changes(): void
     {
         $user = User::factory()->create();
-        $project = Project::factory()->create(['hourly_rate' => 100]);
-        $other = Project::factory()->create(['hourly_rate' => 200]);
+        $project = Project::factory()->create();
+        $other = Project::factory()->create();
+        $rate = Rate::factory()->create(['hourly_rate' => 100]);
+        $premium = Rate::factory()->create(['hourly_rate' => 200]);
 
-        $this->actingAs($user)->post('/time-entries', $this->payload($project));
+        $this->actingAs($user)->post('/time-entries', $this->payload($project, $rate));
         $entry = TimeEntry::sole();
-        $project->update(['hourly_rate' => 150]);
+        $rate->update(['hourly_rate' => 150]);
 
-        // Same project, longer: old rate is kept.
-        $this->actingAs($user)->put("/time-entries/{$entry->id}", $this->payload($project, ['ended_at' => '2026-11-14 09:30']));
+        // Same rate, longer and on another project: the saved 100 RON/h is kept.
+        $this->actingAs($user)->put("/time-entries/{$entry->id}", $this->payload($other, $rate, ['ended_at' => '2026-11-14 09:30']));
         $entry->refresh();
         $this->assertSame('100.00', $entry->hourly_rate);
         $this->assertSame('200.00', $entry->amount);
 
-        // Moved to another project: re-priced with that project's rate.
-        $this->actingAs($user)->put("/time-entries/{$entry->id}", $this->payload($other, ['ended_at' => '2026-11-14 09:30']));
+        // Another rate: re-priced with that rate.
+        $this->actingAs($user)->put("/time-entries/{$entry->id}", $this->payload($other, $premium, ['ended_at' => '2026-11-14 09:30']));
         $entry->refresh();
         $this->assertSame('200.00', $entry->hourly_rate);
         $this->assertSame('400.00', $entry->amount);
@@ -133,7 +178,7 @@ class TimeEntryTest extends TestCase
         $entry = TimeEntry::factory()->create();
         $intruder = User::factory()->create();
 
-        $this->actingAs($intruder)->put("/time-entries/{$entry->id}", $this->payload($entry->project))->assertForbidden();
+        $this->actingAs($intruder)->put("/time-entries/{$entry->id}", $this->payload($entry->project, null))->assertForbidden();
         $this->actingAs($intruder)->delete("/time-entries/{$entry->id}")->assertForbidden();
         $this->assertDatabaseHas('time_entries', ['id' => $entry->id]);
     }

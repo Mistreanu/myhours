@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/app-layout';
 import { addDays, formatDate, formatDuration, formatMoney, nowTime, parseDate, timeOf } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { type ProjectOption, type TagOption, type TimeEntry } from '@/types/models';
+import { type ProjectOption, type RateOption, type TagOption, type TimeEntry } from '@/types/models';
 import { Head, Link, router } from '@inertiajs/react';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Home, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
@@ -17,14 +17,18 @@ interface Props {
     totals: { minutes: number; amount: number };
     week: { date: string; minutes: number }[];
     projects: ProjectOption[];
+    rates: RateOption[];
     tags: TagOption[];
 }
 
-export default function Track({ date, today, entries, totals, week, projects, tags }: Props) {
+export default function Track({ date, today, entries, totals, week, projects, rates, tags }: Props) {
     const [adding, setAdding] = useState(false);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [deleting, setDeleting] = useState<TimeEntry | null>(null);
-    const [lastProjectId, setLastProjectId] = useState<number | null>(entries.at(-1)?.project.id ?? null);
+    // The next new entry starts with the project and rate of the last one.
+    const [last, setLast] = useState<{ projectId: number | null; rateId: number | null } | null>(
+        entries.length ? { projectId: entries[entries.length - 1].project.id, rateId: entries[entries.length - 1].rate?.id ?? null } : null,
+    );
     const dateInput = useRef<HTMLInputElement>(null);
 
     const goTo = (d: string) => {
@@ -36,7 +40,7 @@ export default function Track({ date, today, entries, totals, week, projects, ta
     // New entries continue where the last one of the day ended.
     const lastEnd = entries.length ? timeOf(entries[entries.length - 1].ended_at) : null;
     const defaultStart = lastEnd ?? (date === today ? roundDownToQuarter(nowTime()) : '09:00');
-    const defaults = { date, start: defaultStart, end: addHour(defaultStart), projectId: lastProjectId };
+    const defaults = { date, start: defaultStart, end: addHour(defaultStart), projectId: last?.projectId ?? null, rateId: last?.rateId };
 
     const destroy = () => {
         if (!deleting) return;
@@ -139,10 +143,11 @@ export default function Track({ date, today, entries, totals, week, projects, ta
                     <TimeEntryForm
                         key={`new-${date}-${entries.length}`}
                         projects={projects}
+                        rates={rates}
                         tags={tags}
                         defaults={defaults}
-                        onDone={({ projectId }) => {
-                            setLastProjectId(projectId);
+                        onDone={({ projectId, rateId }) => {
+                            setLast({ projectId, rateId });
                             setAdding(false);
                         }}
                         onCancel={() => setAdding(false)}
@@ -159,7 +164,8 @@ export default function Track({ date, today, entries, totals, week, projects, ta
                         <p className="text-muted-foreground mt-1 max-w-sm text-sm">
                             {projects.length === 0 ? (
                                 <>
-                                    Start by creating a <Link href={route('projects.index')} className="text-primary underline-offset-4 hover:underline">project</Link> with its hourly rate.
+                                    Start by creating a <Link href={route('projects.index')} className="text-primary underline-offset-4 hover:underline">project</Link> and your{' '}
+                                    <Link href={route('rates.index')} className="text-primary underline-offset-4 hover:underline">hourly rates</Link>.
                                 </>
                             ) : (
                                 'Add a time entry with the start and end time, the project and a short description.'
@@ -180,6 +186,7 @@ export default function Track({ date, today, entries, totals, week, projects, ta
                                     <div key={entry.id} className="bg-muted/30 p-4">
                                         <TimeEntryForm
                                             projects={projects}
+                                            rates={rates}
                                             tags={tags}
                                             entry={entry}
                                             onDone={() => setEditingId(null)}
@@ -245,6 +252,7 @@ function EntryRow({ entry, onEdit, onDelete }: { entry: TimeEntry; onEdit: () =>
                         {nextDay && ' (+1)'}
                     </div>
                     <div className="text-primary mt-0.5 text-xs font-medium tabular-nums">{formatMoney(entry.amount)}</div>
+                    <div className="text-muted-foreground text-[11px]">{entry.rate ? `${entry.rate.name} · ${formatMoney(entry.hourly_rate)}/h` : 'No rate'}</div>
                 </div>
                 <div className="flex flex-col gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                     <Button variant="ghost" size="icon" className="size-8" aria-label="Edit" onClick={(e) => { e.stopPropagation(); onEdit(); }}>

@@ -1,29 +1,32 @@
 import InputError from '@/components/input-error';
 import { ProjectSelect } from '@/components/project-select';
+import { RateSelect } from '@/components/rate-select';
 import { TagSelect, type TagValue } from '@/components/tag-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { addDays, addMinutesToTime, formatDuration, formatMoney, minutesBetween, parseDurationInput, timeOf } from '@/lib/format';
-import { type ProjectOption, type TagOption, type TimeEntry } from '@/types/models';
+import { type ProjectOption, type RateOption, type TagOption, type TimeEntry } from '@/types/models';
 import { useForm } from '@inertiajs/react';
 import { Calendar, Clock, LoaderCircle, X } from 'lucide-react';
 import { FormEventHandler, useEffect, useState } from 'react';
 
 interface Props {
     projects: ProjectOption[];
+    rates: RateOption[];
     tags: TagOption[];
     /** When set, the form edits this entry; otherwise it creates a new one. */
     entry?: TimeEntry;
-    defaults?: { date: string; start: string; end: string; projectId?: number | null };
-    onDone: (saved: { date: string; end: string; projectId: number | null }) => void;
+    defaults?: { date: string; start: string; end: string; projectId?: number | null; rateId?: number | null };
+    onDone: (saved: { date: string; end: string; projectId: number | null; rateId: number | null }) => void;
     onCancel: () => void;
     bare?: boolean;
 }
 
 type FormData = {
     project_id: number | null;
+    rate_id: number | null;
     description: string;
     date: string;
     start: string;
@@ -31,9 +34,13 @@ type FormData = {
     tags: TagValue[];
 };
 
-export function TimeEntryForm({ projects, tags, entry, defaults, onDone, onCancel, bare = false }: Props) {
+export function TimeEntryForm({ projects, rates, tags, entry, defaults, onDone, onCancel, bare = false }: Props) {
+    const initialProjectId = entry?.project.id ?? defaults?.projectId ?? null;
     const form = useForm<FormData>({
-        project_id: entry?.project.id ?? defaults?.projectId ?? null,
+        project_id: initialProjectId,
+        rate_id: entry
+            ? (entry.rate?.id ?? null)
+            : (defaults?.rateId ?? projects.find((p) => p.id === initialProjectId)?.default_rate_id ?? null),
         description: entry?.description ?? '',
         date: entry ? entry.started_at.slice(0, 10) : (defaults?.date ?? ''),
         start: entry ? timeOf(entry.started_at) : (defaults?.start ?? '09:00'),
@@ -44,10 +51,16 @@ export function TimeEntryForm({ projects, tags, entry, defaults, onDone, onCance
 
     const minutes = minutesBetween(data.start, data.end);
     const crossesMidnight = minutes !== null && data.end <= data.start;
-    const project = projects.find((p) => p.id === data.project_id);
-    // Editing keeps the rate saved on the entry unless the project changes.
-    const rate = entry && entry.project.id === data.project_id ? entry.hourly_rate : (project?.hourly_rate ?? 0);
+    const selectedRate = rates.find((r) => r.id === data.rate_id);
+    // Editing keeps the amount per hour saved on the entry unless another rate is picked.
+    const rate = entry && (entry.rate?.id ?? null) === data.rate_id ? entry.hourly_rate : (selectedRate?.hourly_rate ?? 0);
     const amount = minutes !== null ? Math.round(minutes * rate * 100 / 60) / 100 : 0;
+
+    const changeProject = (id: number) => {
+        // Picking a project pre-selects its default rate (if it has one); the rate stays editable.
+        const defaultRate = projects.find((p) => p.id === id)?.default_rate_id;
+        setData((d) => ({ ...d, project_id: id, rate_id: defaultRate ?? d.rate_id }));
+    };
 
     const [durationText, setDurationText] = useState(minutes !== null ? formatDuration(minutes) : '');
     useEffect(() => {
@@ -69,6 +82,7 @@ export function TimeEntryForm({ projects, tags, entry, defaults, onDone, onCance
 
         form.transform((d) => ({
             project_id: d.project_id,
+            rate_id: d.rate_id,
             description: d.description,
             tags: d.tags,
             started_at: `${d.date} ${d.start}`,
@@ -77,7 +91,7 @@ export function TimeEntryForm({ projects, tags, entry, defaults, onDone, onCance
 
         const options = {
             preserveScroll: true,
-            onSuccess: () => onDone({ date: data.date, end: data.end, projectId: data.project_id }),
+            onSuccess: () => onDone({ date: data.date, end: data.end, projectId: data.project_id, rateId: data.rate_id }),
         };
 
         if (entry) {
@@ -106,8 +120,13 @@ export function TimeEntryForm({ projects, tags, entry, defaults, onDone, onCance
                 <div className="grid content-start gap-3">
                     <div className="grid gap-1.5">
                         <Label htmlFor="project">Project</Label>
-                        <ProjectSelect id="project" projects={projects} value={data.project_id} onChange={(id) => setData('project_id', id)} invalid={!!errors.project_id} />
+                        <ProjectSelect id="project" projects={projects} value={data.project_id} onChange={changeProject} invalid={!!errors.project_id} />
                         <InputError message={errors.project_id} />
+                    </div>
+                    <div className="grid gap-1.5">
+                        <Label htmlFor="rate">Rate</Label>
+                        <RateSelect id="rate" rates={rates} value={data.rate_id} onChange={(id) => setData('rate_id', id)} />
+                        <InputError message={errors.rate_id} />
                     </div>
                     <div className="grid gap-1.5">
                         <Label htmlFor="description">Description</Label>
@@ -170,7 +189,7 @@ export function TimeEntryForm({ projects, tags, entry, defaults, onDone, onCance
                     <div className="bg-muted/60 rounded-lg px-3 py-2.5 text-sm">
                         <div className="text-muted-foreground flex justify-between">
                             <span>Rate</span>
-                            <span className="tabular-nums">{project || entry ? `${formatMoney(rate)}/h` : '—'}</span>
+                            <span className="tabular-nums">{formatMoney(rate)}/h</span>
                         </div>
                         <div className="mt-1 flex justify-between font-semibold">
                             <span>Amount</span>

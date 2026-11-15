@@ -15,7 +15,6 @@ class ProjectFactory extends Factory
         return [
             'client_id' => Client::factory(),
             'name' => fake()->unique()->words(2, true),
-            'hourly_rate' => 100,
             'color' => fake()->hexColor(),
             'archived' => false,
         ];

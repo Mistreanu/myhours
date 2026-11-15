@@ -79,10 +79,7 @@ export function ProjectSelect({ projects, value, onChange, invalid, id }: Props)
                                     >
                                         <ColorDot color={p.color} />
                                         <span className="truncate">{p.name}</span>
-                                        {p.hourly_rate !== undefined && (
-                                            <span className="text-muted-foreground ml-auto text-xs tabular-nums">{p.hourly_rate} RON/h</span>
-                                        )}
-                                        <Check className={cn('size-4', p.id === value ? 'opacity-100' : 'opacity-0')} />
+                                        <Check className={cn('ml-auto size-4', p.id === value ? 'opacity-100' : 'opacity-0')} />
                                     </CommandItem>
                                 ))}
                             </CommandGroup>

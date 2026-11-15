@@ -4,9 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Client;
 use App\Models\Project;
+use App\Models\Rate;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -16,7 +16,7 @@ class ProjectController extends Controller
     public function index(): Response
     {
         $projects = Project::query()
-            ->with('client:id,name')
+            ->with(['client:id,name', 'defaultRate:id,name,hourly_rate'])
             ->withCount('timeEntries')
             ->withSum('timeEntries as minutes', 'duration_minutes')
             ->withSum('timeEntries as amount', 'amount')
@@ -29,15 +29,17 @@ class ProjectController extends Controller
                 'id' => $p->id,
                 'name' => $p->name,
                 'color' => $p->color,
-                'hourly_rate' => (float) $p->hourly_rate,
                 'archived' => $p->archived,
                 'client_id' => $p->client_id,
                 'client' => $p->client?->name,
+                'default_rate_id' => $p->default_rate_id,
+                'default_rate' => $p->defaultRate ? ['name' => $p->defaultRate->name, 'hourly_rate' => (float) $p->defaultRate->hourly_rate] : null,
                 'entries_count' => $p->time_entries_count,
                 'minutes' => (int) $p->minutes,
                 'amount' => (float) $p->amount,
             ]),
             'clients' => Client::orderBy('name')->get(['id', 'name']),
+            'rates' => Rate::options($projects->pluck('default_rate_id')->all()),
         ]);
     }
 
@@ -50,21 +52,7 @@ class ProjectController extends Controller
 
     public function update(Request $request, Project $project): RedirectResponse
     {
-        $data = $this->validated($request, $project);
-        $applyToEntries = $request->boolean('apply_rate_to_entries');
-
-        DB::transaction(function () use ($project, $data, $applyToEntries) {
-            $project->update($data);
-
-            // By default entries keep the rate they were saved with; on request,
-            // re-price every existing entry of this project with the new rate.
-            if ($applyToEntries) {
-                $project->timeEntries()->update([
-                    'hourly_rate' => $project->hourly_rate,
-                    'amount' => DB::raw('ROUND(duration_minutes * '.(float) $project->hourly_rate.' / 60, 2)'),
-                ]);
-            }
-        });
+        $project->update($this->validated($request, $project));
 
         return back()->with('success', 'Project updated.');
     }
@@ -91,7 +79,7 @@ class ProjectController extends Controller
                 'required', 'string', 'max:255',
                 Rule::unique('projects', 'name')->where('client_id', $request->input('client_id'))->ignore($project),
             ],
-            'hourly_rate' => ['required', 'numeric', 'min:0', 'max:99999999'],
+            'default_rate_id' => ['nullable', 'integer', 'exists:rates,id'],
             'color' => ['required', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'archived' => ['boolean'],
         ], [
@@ -99,7 +87,7 @@ class ProjectController extends Controller
         ], [
             'client_id' => 'client',
             'name' => 'name',
-            'hourly_rate' => 'hourly rate',
+            'default_rate_id' => 'default rate',
             'color' => 'color',
         ]);
     }

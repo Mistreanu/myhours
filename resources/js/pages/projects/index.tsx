@@ -4,7 +4,6 @@ import { ConfirmDialog } from '@/components/confirm-dialog';
 import InputError from '@/components/input-error';
 import { EmptyState, PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
@@ -13,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import AppLayout from '@/layouts/app-layout';
 import { formatDuration, formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { type ClientOption } from '@/types/models';
+import { type ClientOption, type RateOption } from '@/types/models';
 import { Head, Link, router, useForm } from '@inertiajs/react';
 import { Archive, ArchiveRestore, Briefcase, LoaderCircle, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 import { FormEventHandler, useState } from 'react';
@@ -22,10 +21,11 @@ interface Project {
     id: number;
     name: string;
     color: string;
-    hourly_rate: number;
     archived: boolean;
     client_id: number | null;
     client: string | null;
+    default_rate_id: number | null;
+    default_rate: { name: string; hourly_rate: number } | null;
     entries_count: number;
     minutes: number;
     amount: number;
@@ -34,9 +34,10 @@ interface Project {
 interface Props {
     projects: Project[];
     clients: ClientOption[];
+    rates: RateOption[];
 }
 
-export default function Projects({ projects, clients }: Props) {
+export default function Projects({ projects, clients, rates }: Props) {
     const [dialog, setDialog] = useState<{ project: Project | null } | null>(null);
     const [deleting, setDeleting] = useState<Project | null>(null);
     const [showArchived, setShowArchived] = useState(false);
@@ -48,7 +49,7 @@ export default function Projects({ projects, clients }: Props) {
     const toggleArchive = (p: Project) =>
         router.put(
             route('projects.update', p.id),
-            { name: p.name, client_id: p.client_id, hourly_rate: p.hourly_rate, color: p.color, archived: !p.archived },
+            { name: p.name, client_id: p.client_id, default_rate_id: p.default_rate_id, color: p.color, archived: !p.archived },
             { preserveScroll: true },
         );
 
@@ -59,7 +60,7 @@ export default function Projects({ projects, clients }: Props) {
             <div className="mx-auto w-full max-w-5xl space-y-6 p-4 md:p-8">
                 <PageHeader
                     title="Projects"
-                    description="Each project has its own hourly rate in RON, used to price your time entries."
+                    description="Group your work by project. A project can have a default rate that is pre-selected when you track time on it."
                     actions={
                         <Button onClick={() => setDialog({ project: null })}>
                             <Plus />
@@ -72,7 +73,7 @@ export default function Projects({ projects, clients }: Props) {
                     <EmptyState
                         icon={Briefcase}
                         title="No projects yet"
-                        description="Create your first project and set its hourly rate. You can attach it to a client."
+                        description="Create your first project. You can attach it to a client and give it a default rate."
                         action={
                             <Button onClick={() => setDialog({ project: null })}>
                                 <Plus />
@@ -82,9 +83,9 @@ export default function Projects({ projects, clients }: Props) {
                     />
                 ) : (
                     <div className="bg-card overflow-hidden rounded-xl border shadow-xs">
-                        <div className="text-muted-foreground hidden grid-cols-[minmax(0,1fr)_8rem_6rem_9rem_2.5rem] gap-4 border-b px-5 py-3 text-xs font-semibold tracking-wide uppercase lg:grid">
+                        <div className="text-muted-foreground hidden grid-cols-[minmax(0,1fr)_11rem_6rem_9rem_2.5rem] gap-4 border-b px-5 py-3 text-xs font-semibold tracking-wide uppercase lg:grid">
                             <span>Project</span>
-                            <span className="text-right">Hourly rate</span>
+                            <span className="text-right">Default rate</span>
                             <span className="text-right">Tracked</span>
                             <span className="text-right">Amount</span>
                             <span />
@@ -94,7 +95,7 @@ export default function Projects({ projects, clients }: Props) {
                                 <div
                                     key={p.id}
                                     className={cn(
-                                        'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 gap-y-1 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_8rem_6rem_9rem_2.5rem]',
+                                        'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-4 gap-y-1 px-5 py-4 lg:grid-cols-[minmax(0,1fr)_11rem_6rem_9rem_2.5rem]',
                                         p.archived && 'opacity-60',
                                     )}
                                 >
@@ -110,7 +111,16 @@ export default function Projects({ projects, clients }: Props) {
                                             <div className="text-muted-foreground truncate text-sm">{p.client ?? 'No client'}</div>
                                         </div>
                                     </div>
-                                    <div className="text-right font-medium whitespace-nowrap tabular-nums">{formatMoney(p.hourly_rate)}<span className="text-muted-foreground text-xs">/h</span></div>
+                                    <div className="min-w-0 text-right text-sm">
+                                        {p.default_rate ? (
+                                            <>
+                                                <div className="truncate font-medium">{p.default_rate.name}</div>
+                                                <div className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">{formatMoney(p.default_rate.hourly_rate)}/h</div>
+                                            </>
+                                        ) : (
+                                            <span className="text-muted-foreground">—</span>
+                                        )}
+                                    </div>
                                     <div className="text-muted-foreground hidden text-right tabular-nums lg:block">{formatDuration(p.minutes)}</div>
                                     <div className="hidden text-right whitespace-nowrap tabular-nums lg:block">{formatMoney(p.amount)}</div>
                                     <div className="flex justify-end">
@@ -163,7 +173,7 @@ export default function Projects({ projects, clients }: Props) {
                 )}
             </div>
 
-            {dialog && <ProjectDialog project={dialog.project} clients={clients} onClose={() => setDialog(null)} />}
+            {dialog && <ProjectDialog project={dialog.project} clients={clients} rates={rates} onClose={() => setDialog(null)} />}
 
             <ConfirmDialog
                 open={deleting !== null}
@@ -176,17 +186,14 @@ export default function Projects({ projects, clients }: Props) {
     );
 }
 
-function ProjectDialog({ project, clients, onClose }: { project: Project | null; clients: ClientOption[]; onClose: () => void }) {
+function ProjectDialog({ project, clients, rates, onClose }: { project: Project | null; clients: ClientOption[]; rates: RateOption[]; onClose: () => void }) {
     const { data, setData, post, put, processing, errors } = useForm({
         name: project?.name ?? '',
         client_id: project?.client_id ?? (null as number | null),
-        hourly_rate: project ? String(project.hourly_rate) : '',
+        default_rate_id: project?.default_rate_id ?? (null as number | null),
         color: project?.color ?? PALETTE[Math.floor(Math.random() * PALETTE.length)],
         archived: project?.archived ?? false,
-        apply_rate_to_entries: false as boolean,
     });
-
-    const rateChanged = project !== null && Number(data.hourly_rate) !== project.hourly_rate;
 
     const submit: FormEventHandler = (e) => {
         e.preventDefault();
@@ -201,7 +208,7 @@ function ProjectDialog({ project, clients, onClose }: { project: Project | null;
                 <form onSubmit={submit} className="grid gap-5">
                     <DialogHeader>
                         <DialogTitle>{project ? 'Edit project' : 'New project'}</DialogTitle>
-                        <DialogDescription>The hourly rate is applied to new time entries of this project.</DialogDescription>
+                        <DialogDescription>You can still pick any rate on each time entry.</DialogDescription>
                     </DialogHeader>
 
                     <div className="grid gap-1.5">
@@ -234,32 +241,31 @@ function ProjectDialog({ project, clients, onClose }: { project: Project | null;
                     </div>
 
                     <div className="grid gap-1.5">
-                        <Label htmlFor="hourly_rate">Hourly rate</Label>
-                        <div className="relative">
-                            <Input
-                                id="hourly_rate"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                inputMode="decimal"
-                                value={data.hourly_rate}
-                                onChange={(e) => setData('hourly_rate', e.target.value)}
-                                required
-                                placeholder="0.00"
-                                className="[appearance:textfield] pr-24 tabular-nums [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                            />
-                            <span className="text-muted-foreground pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm">RON / hour</span>
-                        </div>
-                        <InputError message={errors.hourly_rate} />
-                        {rateChanged && project.entries_count > 0 && (
-                            <label className="bg-muted/60 mt-1 flex items-start gap-3 rounded-lg p-3 text-sm">
-                                <Checkbox checked={data.apply_rate_to_entries} onCheckedChange={(c) => setData('apply_rate_to_entries', c === true)} className="mt-0.5" />
-                                <span>
-                                    Also apply the new rate to the {project.entries_count} existing {project.entries_count === 1 ? 'entry' : 'entries'}
-                                    <span className="text-muted-foreground block text-xs">Otherwise existing entries keep the rate they were saved with.</span>
-                                </span>
-                            </label>
+                        <Label>Default rate</Label>
+                        <Select
+                            value={data.default_rate_id ? String(data.default_rate_id) : 'none'}
+                            onValueChange={(v) => setData('default_rate_id', v === 'none' ? null : Number(v))}
+                        >
+                            <SelectTrigger>
+                                <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="none">No default rate</SelectItem>
+                                {rates
+                                    .filter((r) => !r.archived || r.id === data.default_rate_id)
+                                    .map((r) => (
+                                        <SelectItem key={r.id} value={String(r.id)}>
+                                            {r.name} · {formatMoney(r.hourly_rate)}/h
+                                        </SelectItem>
+                                    ))}
+                            </SelectContent>
+                        </Select>
+                        {rates.length === 0 && (
+                            <p className="text-muted-foreground text-xs">
+                                No rates yet. <Link href={route('rates.index')} className="text-primary hover:underline">Add your hourly rates</Link>
+                            </p>
                         )}
+                        <InputError message={errors.default_rate_id} />
                     </div>
 
                     <div className="grid gap-1.5">

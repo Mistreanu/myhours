@@ -13,7 +13,7 @@ class TimeEntry extends Model
     /** @use HasFactory<\Database\Factories\TimeEntryFactory> */
     use HasFactory;
 
-    protected $fillable = ['user_id', 'project_id', 'description', 'started_at', 'ended_at', 'hourly_rate'];
+    protected $fillable = ['user_id', 'project_id', 'rate_id', 'description', 'started_at', 'ended_at', 'hourly_rate'];
 
     protected function casts(): array
     {
@@ -51,6 +51,11 @@ class TimeEntry extends Model
         return $this->belongsTo(Project::class);
     }
 
+    public function rate(): BelongsTo
+    {
+        return $this->belongsTo(Rate::class);
+    }
+
     public function tags(): BelongsToMany
     {
         return $this->belongsToMany(Tag::class);
@@ -59,7 +64,7 @@ class TimeEntry extends Model
     /**
      * Report filters shared by the detailed view and the Excel export.
      *
-     * @param  array{from?: ?string, to?: ?string, clients?: array<int>, projects?: array<int>, tags?: array<int>, search?: ?string}  $filters
+     * @param  array{from?: ?string, to?: ?string, clients?: array<int>, projects?: array<int>, rates?: array<int>, tags?: array<int>, search?: ?string}  $filters
      */
     public function scopeFiltered(Builder $query, array $filters): Builder
     {
@@ -67,6 +72,7 @@ class TimeEntry extends Model
             ->when($filters['from'] ?? null, fn (Builder $q, string $from) => $q->where('started_at', '>=', $from.' 00:00:00'))
             ->when($filters['to'] ?? null, fn (Builder $q, string $to) => $q->where('started_at', '<=', $to.' 23:59:59'))
             ->when($filters['projects'] ?? [], fn (Builder $q, array $ids) => $q->whereIn('project_id', $ids))
+            ->when($filters['rates'] ?? [], fn (Builder $q, array $ids) => $q->whereIn('rate_id', $ids))
             ->when($filters['clients'] ?? [], fn (Builder $q, array $ids) => $q->whereHas('project', fn (Builder $p) => $p->whereIn('client_id', $ids)))
             ->when($filters['tags'] ?? [], fn (Builder $q, array $ids) => $q->whereHas('tags', fn (Builder $t) => $t->whereIn('tags.id', $ids)))
             ->when($filters['search'] ?? null, fn (Builder $q, string $s) => $q->where('description', 'like', '%'.addcslashes($s, '%_\\').'%'));

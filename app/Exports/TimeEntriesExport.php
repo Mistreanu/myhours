@@ -4,6 +4,7 @@ namespace App\Exports;
 
 use App\Models\Tag;
 use App\Models\TimeEntry;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
@@ -14,19 +15,21 @@ use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 /**
- * Builds the .xlsx export: one sheet with every entry plus a total row,
- * and a second sheet with totals per project.
+ * Builds the .xlsx export: one sheet with every entry plus a total row, and a
+ * summary sheet with totals per project and per rate.
  */
 class TimeEntriesExport
 {
     private const HEADER_FILL = '0F766E';
+
+    private const TOTAL_FILL = 'ECFDF5';
 
     private const MONEY = '#,##0.00 "RON"';
 
     private const HOURS = '0.00';
 
     /**
-     * @param  Collection<int, TimeEntry>  $entries  with project.client and tags loaded
+     * @param  Collection<int, TimeEntry>  $entries  with project.client, rate and tags loaded
      * @param  array<string, mixed>  $filters
      */
     public function __construct(private Collection $entries, private array $filters) {}
@@ -38,7 +41,7 @@ class TimeEntriesExport
         $spreadsheet->getDefaultStyle()->getFont()->setName('Calibri')->setSize(11);
 
         $this->buildEntriesSheet($spreadsheet->getActiveSheet());
-        $this->buildProjectsSheet($spreadsheet->createSheet());
+        $this->buildSummarySheet($spreadsheet->createSheet());
         $spreadsheet->setActiveSheetIndex(0);
 
         (new Xlsx($spreadsheet))->save($path);
@@ -48,30 +51,27 @@ class TimeEntriesExport
     private function buildEntriesSheet(Worksheet $sheet): void
     {
         $sheet->setTitle('Time entries');
+        $this->title($sheet, 'Timesheet report');
 
-        $sheet->setCellValue('A1', 'Timesheet report');
-        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
-        $sheet->setCellValue('A2', $this->periodLabel());
-        $sheet->getStyle('A2')->getFont()->getColor()->setRGB('64748B');
-
-        $headers = ['Date', 'Client', 'Project', 'Description', 'Tags', 'Start', 'End', 'Hours', 'Rate (RON/h)', 'Amount (RON)'];
+        $headers = ['Date', 'Client', 'Project', 'Rate', 'Description', 'Tags', 'Start', 'End', 'Hours', 'RON/h', 'Amount (RON)'];
         $headerRow = 4;
         $sheet->fromArray($headers, null, 'A'.$headerRow);
-        $this->styleHeader($sheet, 'A'.$headerRow.':J'.$headerRow);
+        $this->styleHeader($sheet, "A{$headerRow}:K{$headerRow}");
 
         $row = $headerRow + 1;
         foreach ($this->entries as $entry) {
             $sheet->setCellValue("A{$row}", ExcelDate::PHPToExcel($entry->started_at->copy()->startOfDay()));
             $sheet->setCellValue("B{$row}", $entry->project->client?->name ?? '—');
             $sheet->setCellValue("C{$row}", $entry->project->name);
-            $sheet->setCellValue("D{$row}", (string) $entry->description);
-            $sheet->setCellValue("E{$row}", $entry->tags->map(fn (Tag $t) => $t->name)->join(', '));
-            $sheet->setCellValue("F{$row}", $entry->started_at->format('H:i'));
-            $sheet->setCellValue("G{$row}", $entry->ended_at->format('H:i'));
-            $sheet->setCellValue("H{$row}", round($entry->duration_minutes / 60, 2));
-            $sheet->setCellValue("I{$row}", (float) $entry->hourly_rate);
+            $sheet->setCellValue("D{$row}", $entry->rate?->name ?? '—');
+            $sheet->setCellValue("E{$row}", (string) $entry->description);
+            $sheet->setCellValue("F{$row}", $entry->tags->map(fn (Tag $t) => $t->name)->join(', '));
+            $sheet->setCellValue("G{$row}", $entry->started_at->format('H:i'));
+            $sheet->setCellValue("H{$row}", $entry->ended_at->format('H:i'));
+            $sheet->setCellValue("I{$row}", round($entry->duration_minutes / 60, 2));
+            $sheet->setCellValue("J{$row}", (float) $entry->hourly_rate);
             // Amount as a formula so edits in Excel stay consistent; matches the app's rounding.
-            $sheet->setCellValue("J{$row}", "=ROUND({$entry->duration_minutes}*I{$row}/60,2)");
+            $sheet->setCellValue("K{$row}", "=ROUND({$entry->duration_minutes}*J{$row}/60,2)");
             $row++;
         }
 
@@ -80,68 +80,94 @@ class TimeEntriesExport
         $totalRow = $row;
 
         $sheet->setCellValue("A{$totalRow}", 'TOTAL');
-        $sheet->setCellValue("D{$totalRow}", $this->entries->count().' entries');
-        $sheet->setCellValue("H{$totalRow}", $this->entries->isEmpty() ? 0 : "=SUM(H{$firstData}:H{$lastData})");
-        $sheet->setCellValue("J{$totalRow}", $this->entries->isEmpty() ? 0 : "=SUM(J{$firstData}:J{$lastData})");
-        $totalStyle = $sheet->getStyle("A{$totalRow}:J{$totalRow}");
-        $totalStyle->getFont()->setBold(true);
-        $totalStyle->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('ECFDF5');
-        $totalStyle->getBorders()->getTop()->setBorderStyle(Border::BORDER_MEDIUM)->getColor()->setRGB(self::HEADER_FILL);
+        $sheet->setCellValue("E{$totalRow}", $this->entries->count().' entries');
+        $sheet->setCellValue("I{$totalRow}", $this->entries->isEmpty() ? 0 : "=SUM(I{$firstData}:I{$lastData})");
+        $sheet->setCellValue("K{$totalRow}", $this->entries->isEmpty() ? 0 : "=SUM(K{$firstData}:K{$lastData})");
+        $this->styleTotal($sheet, "A{$totalRow}:K{$totalRow}");
 
         $sheet->getStyle("A{$firstData}:A{$totalRow}")->getNumberFormat()->setFormatCode('dd/mm/yyyy');
-        $sheet->getStyle("H{$firstData}:H{$totalRow}")->getNumberFormat()->setFormatCode(self::HOURS);
-        $sheet->getStyle("I{$firstData}:J{$totalRow}")->getNumberFormat()->setFormatCode(self::MONEY);
-        $sheet->getStyle("F{$firstData}:G{$totalRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle("D{$firstData}:D{$lastData}")->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_TOP);
+        $sheet->getStyle("I{$firstData}:I{$totalRow}")->getNumberFormat()->setFormatCode(self::HOURS);
+        $sheet->getStyle("J{$firstData}:K{$totalRow}")->getNumberFormat()->setFormatCode(self::MONEY);
+        $sheet->getStyle("G{$firstData}:H{$totalRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle("E{$firstData}:E{$lastData}")->getAlignment()->setWrapText(true)->setVertical(Alignment::VERTICAL_TOP);
 
-        foreach (['A' => 12, 'B' => 22, 'C' => 26, 'D' => 60, 'E' => 22, 'F' => 9, 'G' => 9, 'H' => 9, 'I' => 15, 'J' => 16] as $col => $width) {
+        $widths = ['A' => 12, 'B' => 22, 'C' => 24, 'D' => 20, 'E' => 55, 'F' => 20, 'G' => 8, 'H' => 8, 'I' => 9, 'J' => 14, 'K' => 16];
+        foreach ($widths as $col => $width) {
             $sheet->getColumnDimension($col)->setWidth($width);
         }
 
-        $sheet->setAutoFilter("A{$headerRow}:J{$lastData}");
+        $sheet->setAutoFilter("A{$headerRow}:K{$lastData}");
         $sheet->freezePane('A'.($headerRow + 1));
     }
 
-    private function buildProjectsSheet(Worksheet $sheet): void
+    private function buildSummarySheet(Worksheet $sheet): void
     {
-        $sheet->setTitle('Summary by project');
+        $sheet->setTitle('Summary');
+        $this->title($sheet, 'Summary');
 
-        $sheet->setCellValue('A1', 'Summary by project');
-        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
-        $sheet->setCellValue('A2', $this->periodLabel());
-        $sheet->getStyle('A2')->getFont()->getColor()->setRGB('64748B');
+        $byProject = $this->entries
+            ->groupBy('project_id')
+            ->sortByDesc(fn ($g) => $g->sum('duration_minutes'))
+            ->map(fn ($g) => [$g->first()->project->client?->name ?? '—', $g->first()->project->name, $g]);
+        $totalRow = $this->summaryTable($sheet, 4, ['Client', 'Project'], $byProject);
 
-        $sheet->fromArray(['Client', 'Project', 'Entries', 'Hours', 'Amount (RON)'], null, 'A4');
-        $this->styleHeader($sheet, 'A4:E4');
+        $byRate = $this->entries
+            ->groupBy(fn (TimeEntry $e) => $e->rate_id ?? 0)
+            ->sortByDesc(fn ($g) => $g->sum('amount'))
+            ->map(fn ($g) => [$g->first()->rate?->name ?? 'No rate', (float) ($g->first()->rate?->hourly_rate ?? 0), $g]);
+        $this->summaryTable($sheet, $totalRow + 3, ['Rate', 'RON/h'], $byRate, secondIsMoney: true);
 
-        $groups = $this->entries->groupBy('project_id')->sortByDesc(fn ($g) => $g->sum('duration_minutes'));
+        foreach (['A' => 26, 'B' => 30, 'C' => 12, 'D' => 10, 'E' => 18] as $col => $width) {
+            $sheet->getColumnDimension($col)->setWidth($width);
+        }
+    }
 
-        $row = 5;
-        foreach ($groups as $group) {
-            $project = $group->first()->project;
-            $sheet->setCellValue("A{$row}", $project->client?->name ?? '—');
-            $sheet->setCellValue("B{$row}", $project->name);
+    /**
+     * Writes a small table: two label columns, then Entries / Hours / Amount, then a TOTAL row.
+     * Returns the row number of the TOTAL row.
+     *
+     * @param  array{0: string, 1: string}  $labels
+     * @param  Collection<int|string, array{0: string, 1: string|float, 2: Collection<int, TimeEntry>}>  $groups
+     */
+    private function summaryTable(Worksheet $sheet, int $headerRow, array $labels, Collection $groups, bool $secondIsMoney = false): int
+    {
+        $sheet->fromArray([...$labels, 'Entries', 'Hours', 'Amount (RON)'], null, "A{$headerRow}");
+        $this->styleHeader($sheet, "A{$headerRow}:E{$headerRow}");
+
+        $row = $headerRow + 1;
+        foreach ($groups as [$first, $second, $group]) {
+            $sheet->setCellValue("A{$row}", $first);
+            $sheet->setCellValue("B{$row}", $second);
             $sheet->setCellValue("C{$row}", $group->count());
             $sheet->setCellValue("D{$row}", round($group->sum('duration_minutes') / 60, 2));
             $sheet->setCellValue("E{$row}", round((float) $group->sum('amount'), 2));
             $row++;
         }
 
-        $last = max($row - 1, 5);
+        $first = $headerRow + 1;
+        $last = max($row - 1, $first);
         $sheet->setCellValue("A{$row}", 'TOTAL');
-        $sheet->setCellValue("C{$row}", $groups->isEmpty() ? 0 : "=SUM(C5:C{$last})");
-        $sheet->setCellValue("D{$row}", $groups->isEmpty() ? 0 : "=SUM(D5:D{$last})");
-        $sheet->setCellValue("E{$row}", $groups->isEmpty() ? 0 : "=SUM(E5:E{$last})");
-        $totalStyle = $sheet->getStyle("A{$row}:E{$row}");
-        $totalStyle->getFont()->setBold(true);
-        $totalStyle->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB('ECFDF5');
-
-        $sheet->getStyle("D5:D{$row}")->getNumberFormat()->setFormatCode(self::HOURS);
-        $sheet->getStyle("E5:E{$row}")->getNumberFormat()->setFormatCode(self::MONEY);
-
-        foreach (['A' => 24, 'B' => 30, 'C' => 14, 'D' => 10, 'E' => 18] as $col => $width) {
-            $sheet->getColumnDimension($col)->setWidth($width);
+        foreach (['C', 'D', 'E'] as $col) {
+            $sheet->setCellValue("{$col}{$row}", $groups->isEmpty() ? 0 : "=SUM({$col}{$first}:{$col}{$last})");
         }
+        $this->styleTotal($sheet, "A{$row}:E{$row}");
+
+        $sheet->getStyle("D{$first}:D{$row}")->getNumberFormat()->setFormatCode(self::HOURS);
+        $sheet->getStyle("E{$first}:E{$row}")->getNumberFormat()->setFormatCode(self::MONEY);
+        if ($secondIsMoney) {
+            $sheet->getStyle("B{$first}:B{$last}")->getNumberFormat()->setFormatCode(self::MONEY);
+            $sheet->getStyle("B{$first}:B{$last}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_LEFT);
+        }
+
+        return $row;
+    }
+
+    private function title(Worksheet $sheet, string $title): void
+    {
+        $sheet->setCellValue('A1', $title);
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+        $sheet->setCellValue('A2', $this->periodLabel());
+        $sheet->getStyle('A2')->getFont()->getColor()->setRGB('64748B');
     }
 
     private function styleHeader(Worksheet $sheet, string $range): void
@@ -154,11 +180,19 @@ class TimeEntriesExport
         $sheet->getRowDimension((int) preg_replace('/\D/', '', $start))->setRowHeight(22);
     }
 
+    private function styleTotal(Worksheet $sheet, string $range): void
+    {
+        $style = $sheet->getStyle($range);
+        $style->getFont()->setBold(true);
+        $style->getFill()->setFillType(Fill::FILL_SOLID)->getStartColor()->setRGB(self::TOTAL_FILL);
+        $style->getBorders()->getTop()->setBorderStyle(Border::BORDER_MEDIUM)->getColor()->setRGB(self::HEADER_FILL);
+    }
+
     private function periodLabel(): string
     {
         $from = $this->filters['from'] ?? null;
         $to = $this->filters['to'] ?? null;
-        $fmt = fn (string $d) => \Illuminate\Support\Carbon::parse($d)->format('d/m/Y');
+        $fmt = fn (string $d) => Carbon::parse($d)->format('d/m/Y');
 
         return match (true) {
             $from && $to => 'Period: '.$fmt($from).' – '.$fmt($to),

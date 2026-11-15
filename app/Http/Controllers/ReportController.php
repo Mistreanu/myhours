@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Exports\TimeEntriesExport;
 use App\Models\Client;
 use App\Models\Project;
+use App\Models\Rate;
 use App\Models\Tag;
 use App\Models\TimeEntry;
 use App\Support\EntryPresenter;
@@ -34,6 +35,17 @@ class ReportController extends Controller
             ->sortByDesc('minutes')
             ->values();
 
+        $byRate = $entries
+            ->groupBy(fn (TimeEntry $e) => $e->rate_id ?? 0)
+            ->map(fn ($group) => [
+                'id' => $group->first()->rate_id,
+                'name' => $group->first()->rate?->name ?? 'No rate',
+                'minutes' => (int) $group->sum('duration_minutes'),
+                'amount' => (float) $group->sum('amount'),
+            ])
+            ->sortByDesc('amount')
+            ->values();
+
         return Inertia::render('reports/detailed', [
             'filters' => $filters,
             'entries' => $entries->map(EntryPresenter::present(...)),
@@ -43,6 +55,7 @@ class ReportController extends Controller
                 'amount' => (float) $entries->sum('amount'),
             ],
             'byProject' => $byProject,
+            'byRate' => $byRate,
             'options' => [
                 'clients' => Client::orderBy('name')->get(['id', 'name']),
                 'projects' => Project::with('client:id,name')->orderBy('name')->get()->map(fn (Project $p) => [
@@ -50,6 +63,15 @@ class ReportController extends Controller
                     'name' => $p->name,
                     'color' => $p->color,
                     'client' => $p->client?->name,
+                    'default_rate_id' => $p->default_rate_id,
+                    'archived' => $p->archived,
+                ]),
+                // All rates, archived included, so old entries can still be filtered and edited.
+                'rates' => Rate::orderBy('archived')->orderBy('name')->get()->map(fn (Rate $r) => [
+                    'id' => $r->id,
+                    'name' => $r->name,
+                    'hourly_rate' => (float) $r->hourly_rate,
+                    'archived' => $r->archived,
                 ]),
                 'tags' => Tag::orderBy('name')->get(['id', 'name', 'color']),
             ],
@@ -78,14 +100,14 @@ class ReportController extends Controller
         return TimeEntry::query()
             ->where('user_id', $request->user()->id)
             ->filtered($filters)
-            ->with(['project.client', 'tags'])
+            ->with(['project.client', 'rate', 'tags'])
             ->orderBy('started_at');
     }
 
     /**
      * Normalise the query string into the filter array used by TimeEntry::scopeFiltered().
      *
-     * @return array{from: ?string, to: ?string, clients: array<int>, projects: array<int>, tags: array<int>, search: ?string}
+     * @return array{from: ?string, to: ?string, clients: array<int>, projects: array<int>, rates: array<int>, tags: array<int>, search: ?string}
      */
     private function filters(Request $request): array
     {
@@ -97,6 +119,8 @@ class ReportController extends Controller
             'clients.*' => ['integer'],
             'projects' => ['nullable', 'array'],
             'projects.*' => ['integer'],
+            'rates' => ['nullable', 'array'],
+            'rates.*' => ['integer'],
             'tags' => ['nullable', 'array'],
             'tags.*' => ['integer'],
             'search' => ['nullable', 'string', 'max:200'],
@@ -116,6 +140,7 @@ class ReportController extends Controller
             'to' => $to,
             'clients' => array_map('intval', $validated['clients'] ?? []),
             'projects' => array_map('intval', $validated['projects'] ?? []),
+            'rates' => array_map('intval', $validated['rates'] ?? []),
             'tags' => array_map('intval', $validated['tags'] ?? []),
             'search' => $validated['search'] ?? null,
         ];

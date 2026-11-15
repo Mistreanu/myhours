@@ -9,9 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import AppLayout from '@/layouts/app-layout';
 import { addDays, formatDate, formatDuration, formatHours, formatMoney, formatMonth, parseDate, timeOf, toDateString } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { type ClientOption, type ProjectOption, type TagOption, type TimeEntry } from '@/types/models';
+import { type ClientOption, type ProjectOption, type RateOption, type TagOption, type TimeEntry } from '@/types/models';
 import { Head, router } from '@inertiajs/react';
-import { Briefcase, Building2, ChevronLeft, ChevronRight, Clock, Download, FileSpreadsheet, Pencil, Search, Tag, Trash2, Wallet, X } from 'lucide-react';
+import { Briefcase, Building2, ChevronLeft, ChevronRight, Clock, Coins, Download, FileSpreadsheet, Pencil, Search, Tag, Trash2, Wallet, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 
 interface Filters {
@@ -19,6 +19,7 @@ interface Filters {
     to: string | null;
     clients: number[];
     projects: number[];
+    rates: number[];
     tags: number[];
     search: string | null;
 }
@@ -28,7 +29,8 @@ interface Props {
     entries: TimeEntry[];
     totals: { count: number; minutes: number; amount: number };
     byProject: { id: number; name: string; color: string; client: string | null; minutes: number; amount: number }[];
-    options: { clients: ClientOption[]; projects: ProjectOption[]; tags: TagOption[] };
+    byRate: { id: number | null; name: string; minutes: number; amount: number }[];
+    options: { clients: ClientOption[]; projects: ProjectOption[]; rates: RateOption[]; tags: TagOption[] };
 }
 
 type Preset = 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'this_year' | 'all' | 'custom';
@@ -43,7 +45,7 @@ const PRESET_LABELS: Record<Preset, string> = {
     custom: 'Custom range',
 };
 
-export default function Detailed({ filters, entries, totals, byProject, options }: Props) {
+export default function Detailed({ filters, entries, totals, byProject, byRate, options }: Props) {
     const [search, setSearch] = useState(filters.search ?? '');
     const [editing, setEditing] = useState<TimeEntry | null>(null);
     const [deleting, setDeleting] = useState<TimeEntry | null>(null);
@@ -57,6 +59,7 @@ export default function Detailed({ filters, entries, totals, byProject, options 
             to: next.to ?? undefined,
             clients: next.clients.length ? next.clients : undefined,
             projects: next.projects.length ? next.projects : undefined,
+            rates: next.rates.length ? next.rates : undefined,
             tags: next.tags.length ? next.tags : undefined,
             search: next.search || undefined,
         };
@@ -84,6 +87,7 @@ export default function Detailed({ filters, entries, totals, byProject, options 
             to: filters.to ?? undefined,
             clients: filters.clients.length ? filters.clients : undefined,
             projects: filters.projects.length ? filters.projects : undefined,
+            rates: filters.rates.length ? filters.rates : undefined,
             tags: filters.tags.length ? filters.tags : undefined,
             search: filters.search || undefined,
         };
@@ -96,7 +100,7 @@ export default function Detailed({ filters, entries, totals, byProject, options 
         apply(shiftRange(filters.from, filters.to, preset, direction));
     };
 
-    const hasFilters = filters.clients.length > 0 || filters.projects.length > 0 || filters.tags.length > 0 || !!filters.search;
+    const hasFilters = filters.clients.length > 0 || filters.projects.length > 0 || filters.rates.length > 0 || filters.tags.length > 0 || !!filters.search;
 
     // Group rows by month, like the reference "View: Months".
     const months = useMemo(() => {
@@ -114,8 +118,6 @@ export default function Detailed({ filters, entries, totals, byProject, options 
         }
         return groups;
     }, [entries]);
-
-    const maxProjectMinutes = Math.max(1, ...byProject.map((p) => p.minutes));
 
     const destroy = () => {
         if (!deleting) return;
@@ -206,6 +208,13 @@ export default function Detailed({ filters, entries, totals, byProject, options 
                         onChange={(ids) => apply({ projects: ids })}
                     />
                     <FilterSelect
+                        label="Rates"
+                        icon={Coins}
+                        options={options.rates.map((r) => ({ id: r.id, label: r.name, sublabel: `${formatMoney(r.hourly_rate)}/h` }))}
+                        selected={filters.rates}
+                        onChange={(ids) => apply({ rates: ids })}
+                    />
+                    <FilterSelect
                         label="Tags"
                         icon={Tag}
                         options={options.tags.map((t) => ({ id: t.id, label: t.name, color: t.color }))}
@@ -222,7 +231,7 @@ export default function Detailed({ filters, entries, totals, byProject, options 
                             size="sm"
                             onClick={() => {
                                 setSearch('');
-                                apply({ clients: [], projects: [], tags: [], search: null });
+                                apply({ clients: [], projects: [], rates: [], tags: [], search: null });
                             }}
                         >
                             <X />
@@ -238,28 +247,19 @@ export default function Detailed({ filters, entries, totals, byProject, options 
                     <StatCard icon={FileSpreadsheet} label="Time entries" value={String(totals.count)} hint={periodLabel(filters.from, filters.to)} />
                 </div>
 
-                {/* By project */}
-                {byProject.length > 0 && (
-                    <div className="bg-card rounded-xl border p-5 shadow-xs">
-                        <h2 className="mb-4 text-sm font-semibold">By project</h2>
-                        <div className="space-y-3">
-                            {byProject.map((p) => (
-                                <div key={p.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 text-sm sm:grid-cols-[minmax(0,14rem)_1fr_auto]">
-                                    <div className="flex min-w-0 items-center gap-2">
-                                        <ColorDot color={p.color} />
-                                        <span className="truncate font-medium">{p.name}</span>
-                                        {p.client && <span className="text-muted-foreground truncate text-xs">{p.client}</span>}
-                                    </div>
-                                    <div className="bg-muted order-last col-span-2 h-2 overflow-hidden rounded-full sm:order-none sm:col-span-1">
-                                        <div className="h-full rounded-full" style={{ width: `${(p.minutes / maxProjectMinutes) * 100}%`, backgroundColor: p.color }} />
-                                    </div>
-                                    <div className="text-right tabular-nums">
-                                        <span className="font-semibold">{formatDuration(p.minutes)}</span>
-                                        <span className="text-muted-foreground ml-3">{formatMoney(p.amount)}</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                {/* Breakdowns */}
+                {entries.length > 0 && (
+                    <div className="grid gap-4 xl:grid-cols-2">
+                        <Breakdown
+                            title="By project"
+                            rows={byProject.map((p) => ({ key: `p${p.id}`, label: p.name, sublabel: p.client, color: p.color, minutes: p.minutes, amount: p.amount }))}
+                            measure="minutes"
+                        />
+                        <Breakdown
+                            title="By rate"
+                            rows={byRate.map((r) => ({ key: `r${r.id ?? 0}`, label: r.name, sublabel: null, color: 'var(--primary)', minutes: r.minutes, amount: r.amount }))}
+                            measure="amount"
+                        />
                     </div>
                 )}
 
@@ -325,7 +325,10 @@ export default function Detailed({ filters, entries, totals, byProject, options 
                                                         {timeOf(e.started_at)} – {timeOf(e.ended_at)}
                                                     </td>
                                                     <td className="px-4 pt-3 pb-1 text-right font-medium tabular-nums">{formatDuration(e.duration_minutes)}</td>
-                                                    <td className="text-muted-foreground px-4 pt-3 pb-1 text-right whitespace-nowrap tabular-nums">{e.hourly_rate.toFixed(2)}</td>
+                                                    <td className="px-4 pt-3 pb-1 text-right whitespace-nowrap">
+                                                        <div>{e.rate?.name ?? <span className="text-muted-foreground/60 text-xs">no rate</span>}</div>
+                                                        <div className="text-muted-foreground text-xs tabular-nums">{formatMoney(e.hourly_rate)}/h</div>
+                                                    </td>
                                                     <td className="px-4 pt-3 pb-1 text-right font-medium whitespace-nowrap tabular-nums">{formatMoney(e.amount)}</td>
                                                     <td className="px-4 pt-2 pb-1">
                                                         <div className="flex justify-end gap-0.5 opacity-100 md:opacity-0 md:group-hover:opacity-100">
@@ -378,6 +381,7 @@ export default function Detailed({ filters, entries, totals, byProject, options 
                         <TimeEntryForm
                             bare
                             projects={options.projects}
+                            rates={options.rates}
                             tags={options.tags}
                             entry={editing}
                             onDone={() => setEditing(null)}
@@ -407,6 +411,44 @@ function StatCard({ icon: Icon, label, value, hint, accent }: { icon: typeof Clo
             </div>
             <div className={cn('mt-2 text-2xl font-bold tabular-nums', accent && 'text-primary')}>{value}</div>
             {hint && <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div>}
+        </div>
+    );
+}
+
+interface BreakdownRow {
+    key: string;
+    label: string;
+    sublabel: string | null;
+    color: string;
+    minutes: number;
+    amount: number;
+}
+
+/** Horizontal bar list; bars are scaled by hours or by amount. */
+function Breakdown({ title, rows, measure }: { title: string; rows: BreakdownRow[]; measure: 'minutes' | 'amount' }) {
+    const max = Math.max(1, ...rows.map((r) => r[measure]));
+
+    return (
+        <div className="bg-card rounded-xl border p-5 shadow-xs">
+            <h2 className="mb-4 text-sm font-semibold">{title}</h2>
+            <div className="space-y-3">
+                {rows.map((r) => (
+                    <div key={r.key} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 text-sm sm:grid-cols-[minmax(0,12rem)_1fr_auto]">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <ColorDot color={r.color} />
+                            <span className="truncate font-medium">{r.label}</span>
+                            {r.sublabel && <span className="text-muted-foreground truncate text-xs">{r.sublabel}</span>}
+                        </div>
+                        <div className="bg-muted order-last col-span-2 h-2 overflow-hidden rounded-full sm:order-none sm:col-span-1">
+                            <div className="h-full rounded-full" style={{ width: `${(r[measure] / max) * 100}%`, backgroundColor: r.color }} />
+                        </div>
+                        <div className="text-right whitespace-nowrap tabular-nums">
+                            <span className="font-semibold">{formatDuration(r.minutes)}</span>
+                            <span className="text-muted-foreground ml-3">{formatMoney(r.amount)}</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
         </div>
     );
 }

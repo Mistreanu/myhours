@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Project;
+use App\Models\Rate;
 use App\Models\Tag;
 use App\Support\EntryPresenter;
 use Illuminate\Http\Request;
@@ -18,7 +19,7 @@ class TrackController extends Controller
         $user = $request->user();
 
         $entries = $user->timeEntries()
-            ->with(['project.client', 'tags'])
+            ->with(['project.client', 'rate', 'tags'])
             ->whereBetween('started_at', [$date->copy()->startOfDay(), $date->copy()->endOfDay()])
             ->orderBy('started_at')
             ->get();
@@ -36,6 +37,8 @@ class TrackController extends Controller
             return ['date' => $day, 'minutes' => (int) ($weekTotals[$day] ?? 0)];
         });
 
+        $projects = $this->projectOptions();
+
         return Inertia::render('track/index', [
             'date' => $date->toDateString(),
             'today' => now()->toDateString(),
@@ -45,7 +48,9 @@ class TrackController extends Controller
                 'amount' => (float) $entries->sum('amount'),
             ],
             'week' => $week,
-            'projects' => $this->projectOptions(),
+            'projects' => $projects,
+            // Archived rates still used today or as a project default stay selectable.
+            'rates' => Rate::options([...$entries->pluck('rate_id'), ...$projects->pluck('default_rate_id')]),
             'tags' => Tag::orderBy('name')->get(['id', 'name', 'color']),
         ]);
     }
@@ -76,7 +81,7 @@ class TrackController extends Controller
                 'id' => $p->id,
                 'name' => $p->name,
                 'color' => $p->color,
-                'hourly_rate' => (float) $p->hourly_rate,
+                'default_rate_id' => $p->default_rate_id,
                 'archived' => $p->archived,
                 'client' => $p->client?->name,
             ]);

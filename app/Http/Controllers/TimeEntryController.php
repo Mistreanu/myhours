@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\TimeEntryRequest;
-use App\Models\Project;
+use App\Models\Rate;
 use App\Models\Tag;
 use App\Models\TimeEntry;
 use Illuminate\Http\RedirectResponse;
@@ -15,11 +15,9 @@ class TimeEntryController extends Controller
     public function store(TimeEntryRequest $request): RedirectResponse
     {
         DB::transaction(function () use ($request) {
-            $project = Project::findOrFail($request->integer('project_id'));
-
             $entry = $request->user()->timeEntries()->create([
-                ...$request->safe()->only(['project_id', 'description', 'started_at', 'ended_at']),
-                'hourly_rate' => $project->hourly_rate,
+                ...$request->safe()->only(['project_id', 'rate_id', 'description', 'started_at', 'ended_at']),
+                'hourly_rate' => $this->rateAmount($request->input('rate_id')),
             ]);
 
             $entry->tags()->sync($this->resolveTagIds($request->input('tags', [])));
@@ -33,12 +31,12 @@ class TimeEntryController extends Controller
         $this->authorizeOwner($request, $timeEntry);
 
         DB::transaction(function () use ($request, $timeEntry) {
-            $timeEntry->fill($request->safe()->only(['project_id', 'description', 'started_at', 'ended_at']));
+            $timeEntry->fill($request->safe()->only(['project_id', 'rate_id', 'description', 'started_at', 'ended_at']));
 
-            // Moving an entry to another project re-prices it with that project's rate;
-            // otherwise the rate saved with the entry is kept.
-            if ($timeEntry->isDirty('project_id')) {
-                $timeEntry->hourly_rate = Project::findOrFail($timeEntry->project_id)->hourly_rate;
+            // Picking another rate re-prices the entry; otherwise the amount per hour
+            // saved with the entry is kept, even if the rate itself changed since.
+            if ($timeEntry->isDirty('rate_id')) {
+                $timeEntry->hourly_rate = $this->rateAmount($timeEntry->rate_id);
             }
 
             $timeEntry->save();
@@ -55,6 +53,12 @@ class TimeEntryController extends Controller
         $timeEntry->delete();
 
         return back()->with('success', 'Time entry deleted.');
+    }
+
+    /** Hourly amount of the chosen rate; an entry without a rate is worth 0. */
+    private function rateAmount(mixed $rateId): string
+    {
+        return $rateId ? (string) Rate::findOrFail($rateId)->hourly_rate : '0.00';
     }
 
     private function authorizeOwner(Request $request, TimeEntry $timeEntry): void

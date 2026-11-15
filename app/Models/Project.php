@@ -12,12 +12,11 @@ class Project extends Model
     /** @use HasFactory<\Database\Factories\ProjectFactory> */
     use HasFactory;
 
-    protected $fillable = ['client_id', 'name', 'hourly_rate', 'color', 'archived'];
+    protected $fillable = ['client_id', 'default_rate_id', 'name', 'color', 'archived'];
 
     protected function casts(): array
     {
         return [
-            'hourly_rate' => 'decimal:2',
             'archived' => 'boolean',
         ];
     }
@@ -25,6 +24,12 @@ class Project extends Model
     public function client(): BelongsTo
     {
         return $this->belongsTo(Client::class);
+    }
+
+    /** Rate pre-selected in the time entry form when this project is picked. */
+    public function defaultRate(): BelongsTo
+    {
+        return $this->belongsTo(Rate::class, 'default_rate_id');
     }
 
     public function timeEntries(): HasMany
