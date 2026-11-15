@@ -8,3 +8,6 @@
 
 CHANGELOG.md export-ignore
 README.md export-ignore
+
+# Windows batch files need CRLF line endings.
+*.cmd text eol=crlf

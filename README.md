@@ -31,6 +31,22 @@ php artisan serve
 Then open http://127.0.0.1:8000. During frontend development use `composer run dev`
 (Laravel server + Vite with hot reload).
 
+## Deploy
+
+The live site is https://myhours.alwaysdata.net (alwaysdata). After committing your changes:
+
+```bash
+.\deploy.cmd
+```
+
+(or `bash scripts/deploy.sh` from Git Bash). It refuses to run with uncommitted changes,
+pushes `main` to GitHub, runs the tests, builds the frontend, uploads the code, runs the
+migrations and checks that the live site serves the new build. The server's `.env` and
+database are never overwritten. Use `--skip-tests` to skip the test run.
+
+It needs the SSH key `~/.ssh/alwaysdata_myhours` (registered in the alwaysdata panel under
+Remote access → SSH/SFTP → SSH keys).
+
 ## Pages
 
 - **Track** – day view with a week strip; add, edit and delete time entries.
